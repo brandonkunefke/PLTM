@@ -1,0 +1,5 @@
+# Enable database in wrangler.toml
+[[d1_databases]]
+binding = "DB"
+database_name = "poker-tournament-db"
+database_id = "local"
