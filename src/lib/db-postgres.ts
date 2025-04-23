@@ -1,4 +1,5 @@
-// Database connection for Supabase PostgreSQL
+// Modified db.ts for Vercel Postgres integration
+
 import { Pool } from 'pg';
 
 // Initialize PostgreSQL connection pool
