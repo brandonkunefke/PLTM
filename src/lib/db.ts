@@ -1,96 +1,86 @@
-import { D1Database } from '@cloudflare/workers-types';
+// Modified db.ts for Vercel Postgres integration
 
-// Get Cloudflare D1 database context
-export function getCloudflareContext() {
-  // @ts-ignore
-  return process.env.CLOUDFLARE_CONTEXT || {};
-}
+import { Pool } from 'pg';
 
-// Get D1 database instance
-export function getDatabase(): D1Database | null {
-  const context = getCloudflareContext();
-  return context.DB || null;
-}
+// Initialize PostgreSQL connection pool
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+});
 
-// Execute a SQL query with parameters
-export async function executeQuery(
-  sql: string,
-  params: any[] = []
-): Promise<any> {
-  const db = getDatabase();
-  if (!db) {
-    console.error('Database not available');
-    return null;
+// Database utility functions
+export const db = {
+  // Execute a query with parameters
+  async query(text, params = []) {
+    try {
+      const start = Date.now();
+      const result = await pool.query(text, params);
+      const duration = Date.now() - start;
+      console.log('Executed query', { text, duration, rows: result.rowCount });
+      return result;
+    } catch (error) {
+      console.error('Database query error:', error);
+      throw error;
+    }
+  },
+
+  // Get a single row by ID
+  async getById(table, id) {
+    const result = await this.query(`SELECT * FROM ${table} WHERE id = $1`, [id]);
+    return result.rows[0];
+  },
+
+  // Get all rows from a table
+  async getAll(table) {
+    const result = await this.query(`SELECT * FROM ${table}`);
+    return result.rows;
+  },
+
+  // Insert a new row
+  async insert(table, data) {
+    const keys = Object.keys(data);
+    const values = Object.values(data);
+    const placeholders = keys.map((_, i) => `$${i + 1}`).join(', ');
+    const columns = keys.join(', ');
+    
+    const query = `INSERT INTO ${table} (${columns}) VALUES (${placeholders}) RETURNING *`;
+    const result = await this.query(query, values);
+    return result.rows[0];
+  },
+
+  // Update an existing row
+  async update(table, id, data) {
+    const keys = Object.keys(data);
+    const values = Object.values(data);
+    const setClause = keys.map((key, i) => `${key} = $${i + 1}`).join(', ');
+    
+    const query = `UPDATE ${table} SET ${setClause} WHERE id = $${keys.length + 1} RETURNING *`;
+    const result = await this.query(query, [...values, id]);
+    return result.rows[0];
+  },
+
+  // Delete a row
+  async delete(table, id) {
+    const query = `DELETE FROM ${table} WHERE id = $1 RETURNING *`;
+    const result = await this.query(query, [id]);
+    return result.rows[0];
+  },
+
+  // Transaction support
+  async transaction(callback) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await callback(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
   }
+};
 
-  try {
-    const result = await db.prepare(sql).bind(...params).all();
-    return result;
-  } catch (error) {
-    console.error('Database query error:', error);
-    throw error;
-  }
-}
-
-// Execute a SQL query and return a single row
-export async function executeQuerySingle(
-  sql: string,
-  params: any[] = []
-): Promise<any> {
-  const db = getDatabase();
-  if (!db) {
-    console.error('Database not available');
-    return null;
-  }
-
-  try {
-    const result = await db.prepare(sql).bind(...params).first();
-    return result;
-  } catch (error) {
-    console.error('Database query error:', error);
-    throw error;
-  }
-}
-
-// Execute a SQL query that doesn't return data (INSERT, UPDATE, DELETE)
-export async function executeNonQuery(
-  sql: string,
-  params: any[] = []
-): Promise<any> {
-  const db = getDatabase();
-  if (!db) {
-    console.error('Database not available');
-    return null;
-  }
-
-  try {
-    const result = await db.prepare(sql).bind(...params).run();
-    return result;
-  } catch (error) {
-    console.error('Database query error:', error);
-    throw error;
-  }
-}
-
-// Execute multiple SQL statements in a transaction
-export async function executeTransaction(
-  statements: { sql: string; params: any[] }[]
-): Promise<any> {
-  const db = getDatabase();
-  if (!db) {
-    console.error('Database not available');
-    return null;
-  }
-
-  try {
-    const transaction = db.batch(
-      statements.map(({ sql, params }) => 
-        db.prepare(sql).bind(...params)
-      )
-    );
-    return await transaction.run();
-  } catch (error) {
-    console.error('Database transaction error:', error);
-    throw error;
-  }
-}
+export default db;
